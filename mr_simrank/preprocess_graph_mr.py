@@ -9,37 +9,38 @@ import cPickle as pickle
 import logging
 
 
-def prepare_graph_mr(g, outfile):
+def preprocess_graph_mr(g, infile, outdir):
+  outfile_prefix = '%s/%s'%(outdir, infile)
   logging.info('Converting the graph into a directed graph...')
   g = nx.DiGraph(g)
   logging.info('Converting node labels to integers...')
   g = nx.convert_node_labels_to_integers(g, discard_old_labels=False)
   logging.info('Storing node label to integer label mapping...')
-  with open('%s_oldlabels.pickle'%outfile, 'wb') as f:
+  with open('%s_labelmap.pickle'%outfile_prefix, 'wb') as f:
     pickle.dump(g.node_labels, f)
+  logging.info('Storing directed graph...')
+  nx.write_graphml(g, '%s.digraph'%outfile_prefix)
 
+  del g.node_labels
   logging.info('Forming the MapReduce input file...')
   ctr, MAX_CTR, pctg = 0.0, len(g)**2, 0.0
-  with open(outfile, 'w') as f:
+  with open('%s.txt'%outfile_prefix, 'w') as f:
       for a, b in product(g.nodes(), g.nodes()):
-          a_ps = [str(n) for n in g.predecessors(a)]
-          b_ps = [str(n) for n in g.predecessors(b)]
-          ab_nss = len(g.successors(a))*len(g.successors(b))
-          f.write('%d,%d\t%s,%s,%d\n'%(a, b, ' '.join(a_ps), ' '.join(b_ps), ab_nss))
+          f.write('%d,%d\n'%(a, b))
           # Percentage report
           ctr += 1
           if round(ctr/MAX_CTR * 10) > pctg:
             pctg = round(ctr/MAX_CTR * 10)
-            logging.info('%d percent complete...'%(int(pctg)*10))
+            logging.info('%d %% done...'%(int(pctg)*10))
 
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Prepares a graph for mapreduce version of delta simrank.')
   parser.add_argument('infile', help='input file in graphml format')
-  parser.add_argument('outfile', default='g_mapred_input.txt', help='outputfile in textual format to be read by mapper of mapreduce')
+  parser.add_argument('outdir', help='output dir')
   args = parser.parse_args()
 
   logging.root.setLevel(logging.INFO)
   logging.info('Reading the graph...')
   g = nx.read_graphml(args.infile)
-  prepare_graph_mr(g, args.outfile)
+  preprocess_graph_mr(g, args.infile, args.outdir)
