@@ -6,9 +6,11 @@ __author__ = 'Amir Fayazi'
 from mrjob.job import MRJob
 from itertools import product
 import collections
+import networkx as nx
 #import pydevd
 
 EPS = 1e-8
+DELTA_EPS = 1e-4
 
 class MRSimRank(MRJob):
   """
@@ -24,54 +26,52 @@ class MRSimRank(MRJob):
     super(MRSimRank, self).configure_options()
     self.add_passthrough_option('--decay-factor', type='float', default=0.8, help='SimRank decay factor')
     self.add_passthrough_option('--iters', type='int', default=5, help='Number of iterations')
+    self.add_file_option('--graph-file', help='The graph file where the simrank is applied to')
+
+  
+  def read_graph(self):
+    """Reads the reference graph file"""
+    self.graph = nx.read_graphml(self.options.graph_file)
+
 
   def init_mapper(self, key, value):
     """
     This mapper reads the prepared input text file and initializes the SimRank values.
-    For each pair of nodes, mapers and reducers pass its information through. This information
-    includes the list of each node's predecessors, the current value of delta and SimRank and
-    the size of the successors of the pair
-    The calculation is done by each node emiting its own delta to all node pairs which this pair
+    The calculation is done by each node emiting its own simrank to all node pairs which this pair
     is a successor on the G^2 graph.
     """
 
-    key, value = value.split('\t')
-    a, b = key.split(',')
-    a, b = int(a), int(b)
+    a, b = value.split(',')
     if a == b:
       sim = 1
     else:
       sim = 0
-    a_ps, b_ps, ab_nss = value.split(',')
-    a_ps, b_ps = a_ps.split(' '), b_ps.split(' ')
-    a_ps = [int(n) for n in a_ps]
-    b_ps = [int(n) for n in b_ps]
-    ab_nss = int(ab_nss)
-    yield (a, b), (a_ps, b_ps, ab_nss, sim)
+    yield (a, b), (sim,)
 
-    for c, d in product(a_ps, b_ps):
+    for c, d in product(self.graph.predecessors(a), self.graph.predecessors(b)):
       yield (c,d), sim
   
 
   def delta_reducer(self, key, values):
     """
     The reducer updates the value of delta and subsequently the value of SimRank for each pair
-    of node. It also passes the node information through.
+    of node.
     """
 
     a, b = key
+    ab_nss = len(self.graph.successors(a)) * len(self.graph.successors(b))
     deltas = []
     for v in values:
       if not isinstance(v, collections.Iterable):
         deltas.append(v)
       else:
-        a_ps, b_ps, ab_nss, sim = v
+        sim, = v
     if a == b:
       delta = 0
     else:
       delta = self.options.decay_factor*sum(deltas)/(ab_nss + EPS)
     sim += delta
-    yield key, (delta, a_ps, b_ps, ab_nss, sim)
+    yield key, (delta, sim)
 
 
   def delta_mapper(self, key, value):
@@ -82,14 +82,14 @@ class MRSimRank(MRJob):
     """
 
     a, b = key
-    delta, a_ps, b_ps, ab_nss, sim = value
+    delta, sim = value
 
-    yield key, (a_ps, b_ps, ab_nss, sim)
-    if a == b or delta <= EPS:
+    yield key, (sim,)
+    if a == b or delta <= DELTA_EPS:
       return
-    for c, d in product(a_ps, b_ps):
+    for c, d in product(self.graph.predecessors(a), self.graph.predecessors(b)):
       yield (c,d), delta
-
+ 
 
   def final_reducer(self, key, values):
     """
@@ -98,7 +98,7 @@ class MRSimRank(MRJob):
 
     values = list(values)
     assert len(values) == 1
-    delta, a_ps, b_ps, ab_nss, sim = values[0]
+    delta, sim = values[0]
     yield key, sim
 
 
@@ -108,9 +108,9 @@ class MRSimRank(MRJob):
     performed
     """
 
-    steps_list = [self.mr(mapper=self.init_mapper, reducer=self.delta_reducer)]
+    steps_list = [self.mr(mapper_init=self.read_graph, mapper=self.init_mapper, reducer_init=self.read_graph, reducer=self.delta_reducer)]
     for i in range(self.options.iters - 1):
-      steps_list.append(self.mr(mapper=self.delta_mapper, reducer=self.delta_reducer))
+      steps_list.append(self.mr(mapper_init=self.read_graph, mapper=self.delta_mapper, reducer_init=self.read_graph, reducer=self.delta_reducer))
     steps_list.append(self.mr(reducer=self.final_reducer))
     return steps_list
 
