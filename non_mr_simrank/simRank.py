@@ -24,7 +24,7 @@ def simrank(G, r=0.8, max_iter=10, eps=EPS):
  
   nodes = G.nodes()
   pred_func = G.predecessors if isinstance(G, nx.DiGraph) else G.neighbors
-  nodes_i = {k: v for(k, v) in [(nodes[i], i) for i in range(0, len(nodes))]}
+  nodes_i = {nodes[i]: i for i in range(0, len(nodes))}
 
   sim_prev = numpy.zeros(len(nodes))
   sim = numpy.identity(len(nodes))
@@ -36,7 +36,7 @@ def simrank(G, r=0.8, max_iter=10, eps=EPS):
     for u, v in itertools.product(nodes, nodes):
       if u is v: continue
       u_ps, v_ps = pred_func(u), pred_func(v)
-      s_uv = sum([sim_prev[nodes_i[u_n]][nodes_i[v_n]] for u_n, v_n in itertools.product(u_ps, v_ps)])
+      s_uv = sum(sim_prev[nodes_i[u_n]][nodes_i[v_n]] for u_n, v_n in itertools.product(u_ps, v_ps))
       sim[nodes_i[u]][nodes_i[v]] = (r * s_uv) / (len(u_ps) * len(v_ps) + DIV_EPS)
     logging.info('iter %d'%(i + 1))
 
@@ -46,7 +46,7 @@ def simrank(G, r=0.8, max_iter=10, eps=EPS):
 def simrank_map(uvps):
   u, v, u_ps, v_ps = uvps
   if u == v: return
-  s_uv = sum([sim_prev[nodes_i[u_n]][nodes_i[v_n]] for u_n, v_n in itertools.product(u_ps, v_ps)])
+  s_uv = sum(sim_prev[nodes_i[u_n]][nodes_i[v_n]] for u_n, v_n in itertools.product(u_ps, v_ps))
   sim[nodes_i[u]][nodes_i[v]] = (r * s_uv) / (len(u_ps) * len(v_ps) + DIV_EPS)
 
 
@@ -67,7 +67,7 @@ def prll_simrank(G, r=0.8, max_iter=10, eps=EPS):
   """
  
   nodes = G.nodes()
-  nodes_i = {k: v for(k, v) in [(nodes[i], i) for i in range(0, len(nodes))]}
+  nodes_i = {nodes[i]: i for i in range(0, len(nodes))}
   sim_prev_shr = mp.Array(ctypes.c_double, len(nodes)**2, lock=False)
   sim_shr = mp.Array(ctypes.c_double, len(nodes)**2, lock=False)
  
@@ -84,8 +84,8 @@ def prll_simrank(G, r=0.8, max_iter=10, eps=EPS):
     logging.info('Started mapping...')
     try:
       pool.map(simrank_map,
-                [(u, v, pred_func(u), pred_func(v)) for u, v in itertools.product(nodes, nodes)],
-                chunksize=CHUNK_SIZE)
+               ((u, v, pred_func(u), pred_func(v)) for u, v in itertools.product(nodes, nodes)),
+               chunksize=CHUNK_SIZE)
     except:
       logging.error('Exception in pool map')
       traceback.print_exc()
